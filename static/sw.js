@@ -1,4 +1,4 @@
-const CACHE = "finanzas-v1";
+const CACHE = "finanzas-v2";
 const SHELL = ["/", "/manifest.json", "/static/icon-192.png", "/static/icon-512.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
