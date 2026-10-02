@@ -227,6 +227,10 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_bills_due ON bills(due_date);
             """
         )
+        # Migración: la factura pagada genera un movimiento de gasto (tx_id)
+        bcols = [r["name"] for r in db.execute("PRAGMA table_info(bills)").fetchall()]
+        if "tx_id" not in bcols:
+            db.execute("ALTER TABLE bills ADD COLUMN tx_id INTEGER")
         # Categorías iniciales (solo si la tabla está vacía)
         n = db.execute("SELECT COUNT(*) AS c FROM categories").fetchone()["c"]
         if n == 0:
@@ -614,8 +618,21 @@ def api_bill_pay(bill_id):
     if row["paid"]:
         return jsonify({"ok": True})
     today = _today()
+    # Al pagar se genera el movimiento de gasto para que el Panel,
+    # Movimientos y Calendario lo reflejen.
+    cur = db.execute(
+        "INSERT INTO transactions (type, amount, category, description, date, created_at)"
+        " VALUES ('expense', ?, 'Servicios', ?, ?, ?)",
+        (
+            round(row["amount"], 2),
+            "🏢 " + row["company"],
+            today,
+            _dt.datetime.now().isoformat(timespec="seconds"),
+        ),
+    )
     db.execute(
-        "UPDATE bills SET paid=1, paid_date=? WHERE id=?", (today, bill_id)
+        "UPDATE bills SET paid=1, paid_date=?, tx_id=? WHERE id=?",
+        (today, cur.lastrowid, bill_id),
     )
     new_id = None
     if row["recurring"]:
@@ -643,7 +660,10 @@ def api_bill_unpay(bill_id):
     row = db.execute("SELECT * FROM bills WHERE id=?", (bill_id,)).fetchone()
     if not row:
         return jsonify({"error": "no existe"}), 404
-    db.execute("UPDATE bills SET paid=0, paid_date=NULL WHERE id=?", (bill_id,))
+    # Al quitar el pagado se elimina también el movimiento generado
+    if row["tx_id"]:
+        db.execute("DELETE FROM transactions WHERE id=?", (row["tx_id"],))
+    db.execute("UPDATE bills SET paid=0, paid_date=NULL, tx_id=NULL WHERE id=?", (bill_id,))
     # Si al pagarlo se generó el siguiente mes automáticamente, quitarlo
     db.execute(
         "DELETE FROM bills WHERE parent_id=? AND paid=0", (bill_id,)

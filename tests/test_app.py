@@ -129,3 +129,23 @@ def test_category_delete_protection(client):
     r = client.post("/api/categories", json={"name": "Mascotas", "type": "expense"})
     assert r.status_code == 201
     assert client.delete(f"/api/categories/{r.get_json()['id']}").status_code == 200
+
+
+def test_bill_pay_crea_movimiento_y_unpay_lo_quita(client):
+    r = client.post("/api/bills", json={
+        "company": "Luz", "amount": 60, "due_date": "2026-10-10", "recurring": False})
+    bid = r.get_json()["id"]
+    assert client.post(f"/api/bills/{bid}/pay").status_code == 200
+    # el pago genera un movimiento de gasto con la fecha de hoy
+    txs = client.get("/api/transactions?year=2026&month=10").get_json()
+    gen = [t for t in txs if t["description"] == "🏢 Luz"]
+    assert len(gen) == 1 and gen[0]["type"] == "expense" and gen[0]["amount"] == 60
+    # el dashboard del mes lo cuenta
+    import datetime as _dt
+    d = _dt.date.today()
+    dash = client.get(f"/api/dashboard?year={d.year}&month={d.month}").get_json()
+    assert dash["expense"] >= 60
+    # quitar el pago elimina el movimiento generado
+    assert client.post(f"/api/bills/{bid}/unpay").status_code == 200
+    txs = client.get("/api/transactions?year=2026&month=10").get_json()
+    assert not [t for t in txs if t["description"] == "🏢 Luz"]
