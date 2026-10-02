@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: mis-finanzas
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import app; app.init_db()" && waitress-serve --listen=0.0.0.0:$PORT app:app
+    envVars:
+      - key: TURSO_URL
+        sync: false
+      - key: TURSO_TOKEN
+        sync: false
