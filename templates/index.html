@@ -246,18 +246,21 @@ async function loadDashboard(){
   const cats=d.by_category;
   $("cat-legend").innerHTML=cats.length?cats.map(c=>`<div><span class="dot" style="background:${c.color}"></span>${c.name} ${c.pct}%</div>`).join(""):`<div class="empty">Sin gastos este mes</div>`;
   if(charts.cat)charts.cat.destroy();
-  if(cats.length){charts.cat=new Chart($("ch-cat"),{type:"doughnut",
+  if(cats.length&&typeof Chart!=="undefined"){charts.cat=new Chart($("ch-cat"),{type:"doughnut",
     data:{labels:cats.map(c=>c.name),datasets:[{data:cats.map(c=>c.total),backgroundColor:cats.map(c=>c.color)}]},
     options:{plugins:{legend:{display:false}},cutout:"62%"}});}
   // evolución
   if(charts.evol)charts.evol.destroy();
+  if(typeof Chart!=="undefined"){
   charts.evol=new Chart($("ch-evol"),{type:"line",
     data:{labels:d.monthly.map(x=>MESES_S[x.month-1]),
       datasets:[
         {label:"Ingresos",data:d.monthly.map(x=>x.income),borderColor:"#16a34a",backgroundColor:"#16a34a",tension:.3},
         {label:"Gastos",data:d.monthly.map(x=>x.expense),borderColor:"#dc2626",backgroundColor:"#dc2626",tension:.3}]},
     options:{plugins:{legend:{position:"bottom"}},scales:{y:{ticks:{callback:v=>"$"+(v>=1000?(v/1000)+"k":v)}}}}});
+  }
 }
+</script>
 <script>
 /* ---------- Movimientos ---------- */
 document.querySelectorAll("#tab-tx .chips button").forEach(b=>b.onclick=()=>{
@@ -420,8 +423,10 @@ document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if
 
 /* ---------- carga general ---------- */
 async function loadAll(){
-  await loadDashboard();await loadTx();await loadBills();
-  if($("tab-cal").classList.contains("active"))renderCal();
+  try{await loadDashboard();}catch(e){console.warn("dashboard",e);}
+  try{await loadTx();}catch(e){console.warn("tx",e);}
+  try{await loadBills();}catch(e){console.warn("bills",e);}
+  try{if($("tab-cal").classList.contains("active"))await renderCal();}catch(e){console.warn("cal",e);}
   const d=new Date();$("today-lbl").textContent=`${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
