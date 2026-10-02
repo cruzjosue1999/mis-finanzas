@@ -149,3 +149,77 @@ def test_bill_pay_crea_movimiento_y_unpay_lo_quita(client):
     assert client.post(f"/api/bills/{bid}/unpay").status_code == 200
     txs = client.get("/api/transactions?year=2026&month=10").get_json()
     assert not [t for t in txs if t["description"] == "🏢 Luz"]
+
+
+def test_budget_seeded(client):
+    b = client.get("/api/budget").get_json()
+    assert b["total_income"] == 7400
+    assert b["total_expense"] == 3216
+    assert b["remaining"] == 4184
+    assert len(b["income"]) == 3
+    labels = [i["label"] for i in b["expense"]]
+    assert "Vivienda (renta, hipoteca, impuestos, seguro)" in labels
+    assert "Disney" in labels
+
+
+def test_budget_crud(client):
+    r = client.post("/api/budget", json={"kind": "expense", "label": "Prueba", "amount": 100})
+    assert r.status_code == 201
+    bid = r.get_json()["id"]
+    b = client.get("/api/budget").get_json()
+    assert b["total_expense"] == 3316
+    assert client.put(f"/api/budget/{bid}", json={"amount": 50}).status_code == 200
+    b = client.get("/api/budget").get_json()
+    assert b["total_expense"] == 3266
+    assert client.delete(f"/api/budget/{bid}").status_code == 200
+    b = client.get("/api/budget").get_json()
+    assert b["total_expense"] == 3216
+    # validaciones
+    assert client.post("/api/budget", json={"kind": "expense", "label": "x", "amount": -5}).status_code == 400
+    assert client.post("/api/budget", json={"kind": "otro", "label": "x", "amount": 5}).status_code == 400
+
+
+def test_schedules_seed_and_calendar(client):
+    s = client.get("/api/schedules").get_json()
+    assert len(s) == 3
+    # octubre 2026: jueves 1,8,15,22,29 -> Simple delicious $1000
+    # domingos 4,11,18,25 -> Uber $300
+    # Hashi quincenal desde 2026-09-27 -> 2026-10-12 y 2026-10-27 ($1100)
+    cal = client.get("/api/calendar?year=2026&month=10").get_json()["days"]
+
+    def sched_on(day):
+        return cal.get(day, {}).get("scheduled", [])
+
+    th = sched_on("2026-10-01")
+    assert any(x["title"] == "Simple delicious" and x["amount"] == 1000 for x in th)
+    assert not sched_on("2026-10-02")  # viernes: nada programado
+    su = sched_on("2026-10-04")
+    assert any(x["title"] == "Uber" and x["amount"] == 300 for x in su)
+    h1 = sched_on("2026-10-12")
+    assert any(x["title"] == "Hashi" and x["amount"] == 1100 for x in h1)
+    h2 = sched_on("2026-10-27")
+    assert any(x["title"] == "Hashi" and x["amount"] == 1100 for x in h2)
+
+
+def test_schedules_crud_and_validation(client):
+    # crear mensual
+    r = client.post("/api/schedules", json={
+        "kind": "expense", "title": "Renta", "amount": 443,
+        "freq": "monthly", "day": 1})
+    assert r.status_code == 201
+    sid = r.get_json()["id"]
+    cal = client.get("/api/calendar?year=2026&month=10").get_json()["days"]
+    assert any(x["title"] == "Renta" for x in cal["2026-10-01"].get("scheduled", []))
+    # pausar -> desaparece del calendario
+    assert client.put(f"/api/schedules/{sid}", json={"active": False}).status_code == 200
+    cal = client.get("/api/calendar?year=2026&month=10").get_json()["days"]
+    assert not any(x["title"] == "Renta" for x in cal["2026-10-01"].get("scheduled", []))
+    # borrar
+    assert client.delete(f"/api/schedules/{sid}").status_code == 200
+    # validaciones
+    assert client.post("/api/schedules", json={
+        "kind": "income", "title": "x", "amount": 10, "freq": "weekly",
+        "weekday": 9}).status_code == 400
+    assert client.post("/api/schedules", json={
+        "kind": "income", "title": "x", "amount": 0, "freq": "monthly",
+        "day": 5}).status_code == 400

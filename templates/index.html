@@ -100,6 +100,21 @@ nav.tabs button.active{color:var(--blue);font-weight:700}
 .switch.on::after{left:25px}
 #refresh-ind{position:fixed;top:calc(env(safe-area-inset-top,0px) + 54px);left:50%;transform:translateX(-50%);background:#fff;border-radius:20px;padding:6px 14px;font-size:13px;color:var(--mut);box-shadow:0 2px 8px rgba(0,0,0,.15);display:none;z-index:40}
 canvas{max-height:260px}
+/* presupuesto */
+.bsec{background:#fff;border-radius:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden}
+.bhead{color:#fff;font-weight:700;font-size:15px;padding:10px 14px}
+.brow{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-top:1px solid var(--line);font-size:14px;cursor:pointer}
+.brow span{flex:1}
+.brow b{white-space:nowrap}
+.brow.zero{color:var(--mut)}
+.btotal{display:flex;justify-content:space-between;padding:11px 14px;background:#f8fafc;border-top:2px solid var(--line);font-size:15px}
+.bsec .btn{margin:0 14px 12px}
+.sched{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-top:1px solid var(--line);cursor:pointer}
+.sched .t{font-size:14px;font-weight:600}
+.sched .f{font-size:12px;color:var(--mut)}
+.sched .a{font-size:14px;font-weight:700;white-space:nowrap}
+.sched.off{opacity:.5}
+.sched .tag{font-size:10px;background:#ede9fe;color:#6d28d9;border-radius:8px;padding:1px 6px;margin-left:6px}
 </style>
 </head>
 <body>
@@ -153,6 +168,30 @@ canvas{max-height:260px}
     <div id="bills-list"></div>
     <button class="btn blue" id="add-bill-btn" style="width:100%;margin-top:6px">＋ Agregar pago a compañía</button>
   </div>
+
+  <div id="tab-budget" class="tab">
+    <div class="bsec">
+      <div class="bhead" style="background:#22c55e">Entrada de dinero</div>
+      <div id="budget-income"></div>
+      <div class="btotal"><span>Ingresos totales</span><b id="budget-ti">$0.00</b></div>
+      <button class="btn ghost small" id="add-bincome-btn" style="margin:8px 0 0">＋ Agregar entrada</button>
+    </div>
+    <div class="bsec">
+      <div class="bhead" style="background:#ef4444">Salida de dinero</div>
+      <div id="budget-expense"></div>
+      <div class="btotal"><span>Gastos totales</span><b id="budget-te">$0.00</b></div>
+      <button class="btn ghost small" id="add-expense-btn" style="margin:8px 0 0">＋ Agregar gasto</button>
+    </div>
+    <div class="bsec">
+      <div class="bhead" style="background:#0ea5e9">Dinero restante</div>
+      <div class="brow"><span>Ingresos menos gastos</span><b class="blue" id="budget-rem">$0.00</b></div>
+    </div>
+    <div class="bsec">
+      <div class="bhead" style="background:#8b5cf6">Ingresos programados <span style="font-weight:400;font-size:12px">(se marcan en el calendario)</span></div>
+      <div id="sched-list"></div>
+      <button class="btn ghost small" id="add-sched-btn" style="margin:8px 0 0">＋ Agregar programado</button>
+    </div>
+  </div>
 </main>
 
 <button class="fab" id="fab">＋</button>
@@ -190,11 +229,59 @@ canvas{max-height:260px}
   </div>
 </div>
 
+<div class="modal" id="modal-budget">
+  <div class="sheet">
+    <h2 id="budget-form-title">Entrada de presupuesto</h2>
+    <div class="field"><label>Nombre</label><input id="budget-label" type="text" placeholder="Ej. Renta"></div>
+    <div class="field"><label>Monto mensual (USD)</label><input id="budget-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>
+    <div class="rowbtns">
+      <button class="btn danger" id="budget-delete" style="display:none">Borrar</button>
+      <button class="btn ghost" id="budget-cancel">Cancelar</button>
+      <button class="btn blue" id="budget-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal-sched">
+  <div class="sheet">
+    <h2 id="sched-form-title">Ingreso programado</h2>
+    <div class="seg">
+      <button id="sched-inc" class="on-inc">⬆ Ingreso</button>
+      <button id="sched-exp">⬇ Gasto</button>
+    </div>
+    <div class="field"><label>Título</label><input id="sched-title" type="text" placeholder="Ej. Simple delicious"></div>
+    <div class="field"><label>Monto (USD)</label><input id="sched-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>
+    <div class="field"><label>Se repite</label>
+      <select id="sched-freq">
+        <option value="weekly">Cada semana</option>
+        <option value="biweekly">Cada 15 días</option>
+        <option value="monthly">Cada mes</option>
+      </select>
+    </div>
+    <div class="field" id="sched-weekday-wrap"><label>Día de la semana</label>
+      <select id="sched-weekday">
+        <option value="0">Lunes</option><option value="1">Martes</option><option value="2">Miércoles</option>
+        <option value="3">Jueves</option><option value="4">Viernes</option><option value="5">Sábado</option>
+        <option value="6">Domingo</option>
+      </select>
+    </div>
+    <div class="field" id="sched-anchor-wrap" style="display:none"><label>Fecha de referencia (un pago conocido)</label><input id="sched-anchor" type="date"></div>
+    <div class="field" id="sched-day-wrap" style="display:none"><label>Día del mes (1-31)</label><input id="sched-day" type="number" min="1" max="31" placeholder="15"></div>
+    <div class="switchrow" id="sched-active-wrap" style="display:none"><span>Activo (se marca en el calendario)</span><button class="switch on" id="sched-active"></button></div>
+    <div class="rowbtns">
+      <button class="btn danger" id="sched-delete" style="display:none">Borrar</button>
+      <button class="btn ghost" id="sched-cancel">Cancelar</button>
+      <button class="btn blue" id="sched-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <nav class="tabs">
   <button data-tab="tab-panel" class="active"><span class="ic">📊</span>Panel</button>
   <button data-tab="tab-tx"><span class="ic">🧾</span>Movimientos</button>
   <button data-tab="tab-cal"><span class="ic">🗓️</span>Calendario</button>
   <button data-tab="tab-bills"><span class="ic">🏢</span>Compañías</button>
+  <button data-tab="tab-budget"><span class="ic">💵</span>Presupuesto</button>
 </nav>
 
 <script>
@@ -332,10 +419,17 @@ async function renderCal(){
   const tIso=iso(today.getFullYear(),today.getMonth()+1,today.getDate());
   for(let i=firstDow-1;i>=0;i--){const d=prevDim-i;g.innerHTML+=`<div class="day dim"><div class="dn">${d}</div></div>`;}
   for(let d=1;d<=dim;d++){
-    const key=iso(Y,M,d),info=calData.days[key]||{income:0,expense:0,bills:[]};
+    const key=iso(Y,M,d),info=calData.days[key]||{income:0,expense:0,bills:[],scheduled:[]};
     let amts="";
     if(info.income>0)amts+=`<span class="amt up">+${fmt(info.income)}</span>`;
     if(info.expense>0)amts+=`<span class="amt down">−${fmt(info.expense)}</span>`;
+    const sched=info.scheduled||[];
+    if(sched.length){
+      const si=sched.filter(s=>s.kind==="income").reduce((a,s)=>a+s.amount,0);
+      const se=sched.filter(s=>s.kind==="expense").reduce((a,s)=>a+s.amount,0);
+      if(si>0)amts+=`<span class="amt up">⏰+${fmt(si)}</span>`;
+      if(se>0)amts+=`<span class="amt down">⏰−${fmt(se)}</span>`;
+    }
     const dots=info.bills.map(b=>`<span class="bdot${b.paid?" paid":""}"></span>`).join("");
     g.innerHTML+=`<div class="day${key===tIso?" today":""}${selDay===key?" sel":""}" data-day="${key}">
       <div class="dn">${d}</div>${amts}<div class="bills">${dots}</div></div>`;
@@ -350,15 +444,17 @@ async function showDay(key,keep){
   document.querySelectorAll("#cal-grid .day").forEach(el=>el.classList.toggle("sel",el.dataset.day===selDay));
   const dd=$("day-detail");
   if(!selDay){dd.style.display="none";return;}
-  const info=calData.days[selDay]||{income:0,expense:0,bills:[]};
+  const info=calData.days[selDay]||{income:0,expense:0,bills:[],scheduled:[]};
   const list=await api(`/api/transactions?year=${Y}&month=${M}`);
   const dayTx=list.filter(t=>t.date===selDay);
+  const sched=info.scheduled||[];
   const dt=new Date(selDay+"T12:00:00");
   dd.style.display="block";
   dd.innerHTML=`<h3>${dt.getDate()} de ${MESES[dt.getMonth()]} de ${dt.getFullYear()}</h3>`+
     (dayTx.length?dayTx.map(t=>`<div class="tx"><div><div class="d">${esc(t.description)||esc(t.category)}</div><div class="c">${esc(t.category)}</div></div><div class="a ${t.type==="income"?"inc":"exp"}">${t.type==="income"?"+":"−"}${fmt(t.amount)}</div></div>`).join(""):"")+
     (info.bills.length?info.bills.map(b=>`<div class="tx"><div><div class="d">🏢 ${esc(b.company)}</div><div class="c">${b.paid?"Pagado":"Pendiente"}</div></div><div class="a ${b.paid?"inc":"exp"}">${fmt(b.amount)}</div></div>`).join(""):"")+
-    ((!dayTx.length&&!info.bills.length)?`<div class="empty">Nada registrado este día.</div>`:"");
+    (sched.length?sched.map(s=>`<div class="tx"><div><div class="d">⏰ ${esc(s.title)}</div><div class="c">Programado · aprox.</div></div><div class="a ${s.kind==="income"?"inc":"exp"}">${s.kind==="income"?"+":"−"}${fmt(s.amount)}</div></div>`).join(""):"")+
+    ((!dayTx.length&&!info.bills.length&&!sched.length)?`<div class="empty">Nada registrado este día.</div>`:"");
 }
 
 /* ---------- Compañías ---------- */
@@ -421,11 +517,140 @@ $("bill-save").onclick=async ()=>{
 };
 document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("show");}));
 
+/* ---------- Presupuesto ---------- */
+let editBudgetId=null, budgetKind="income";
+let editSchedId=null, schedKind="income";
+
+async function loadBudget(){
+  const b=await api("/api/budget");
+  const rowHtml=(it,cls)=>`<div class="brow${it.amount==0?" zero":""}" onclick="editBudget(${it.id})">
+    <span>${esc(it.label)}</span><b class="${cls}">${fmt(it.amount)}</b></div>`;
+  $("budget-income").innerHTML=b.income.length?b.income.map(it=>rowHtml(it,"up")).join(""):`<div class="empty">Sin entradas.</div>`;
+  $("budget-expense").innerHTML=b.expense.length?b.expense.map(it=>rowHtml(it,"down")).join(""):`<div class="empty">Sin gastos.</div>`;
+  $("budget-ti").textContent=fmt(b.total_income);
+  $("budget-te").textContent=fmt(b.total_expense);
+  const rem=$("budget-rem");rem.textContent=fmt(b.remaining);
+  rem.className=b.remaining<0?"down":"blue";
+  loadSchedules();
+}
+window.editBudget=async id=>{
+  const b=await api("/api/budget");
+  const it=[...b.income,...b.expense].find(x=>x.id===id);if(!it)return;
+  editBudgetId=id;budgetKind=it.kind;
+  $("budget-form-title").textContent=it.kind==="income"?"Editar entrada":"Editar gasto";
+  $("budget-label").value=it.label;$("budget-amount").value=it.amount;
+  $("budget-delete").style.display="";
+  $("modal-budget").classList.add("show");
+};
+function newBudget(kind){
+  editBudgetId=null;budgetKind=kind;
+  $("budget-form-title").textContent=kind==="income"?"Nueva entrada":"Nuevo gasto";
+  $("budget-label").value="";$("budget-amount").value="";
+  $("budget-delete").style.display="none";
+  $("modal-budget").classList.add("show");
+}
+$("add-bincome-btn").onclick=()=>newBudget("income");
+$("add-expense-btn").onclick=()=>newBudget("expense");
+$("budget-cancel").onclick=()=>$("modal-budget").classList.remove("show");
+$("budget-delete").onclick=async ()=>{
+  if(!confirm("¿Borrar esta línea del presupuesto?"))return;
+  await api(`/api/budget/${editBudgetId}`,{method:"DELETE"});
+  $("modal-budget").classList.remove("show");loadBudget();
+};
+$("budget-save").onclick=async ()=>{
+  const label=$("budget-label").value.trim();
+  const amt=parseFloat($("budget-amount").value);
+  if(!label){alert("Escribe el nombre");return;}
+  if(!(amt>=0)){alert("Escribe un monto válido");return;}
+  try{
+    if(editBudgetId)await api(`/api/budget/${editBudgetId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({label,amount:amt})});
+    else await api("/api/budget",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:budgetKind,label,amount:amt})});
+    $("modal-budget").classList.remove("show");loadBudget();
+  }catch(e){alert(e.message);}
+};
+
+/* ---------- Programados ---------- */
+async function loadSchedules(){
+  const list=await api("/api/schedules");
+  const el=$("sched-list");
+  if(!list.length){el.innerHTML=`<div class="empty">Sin programados.</div>`;return;}
+  el.innerHTML=list.map(s=>`<div class="sched${s.active?"":" off"}" onclick="editSched(${s.id})">
+    <div><div class="t">${s.kind==="income"?"⬆":"⬇"} ${esc(s.title)}<span class="tag">≈</span></div>
+    <div class="f">${esc(s.freq_label)}${s.active?"":" · pausado"}</div></div>
+    <div class="a ${s.kind==="income"?"up":"down"}">${fmt(s.amount)}</div>
+  </div>`).join("");
+}
+function syncSchedSeg(){
+  $("sched-inc").className=schedKind==="income"?"on-inc":"";
+  $("sched-exp").className=schedKind==="expense"?"on-exp":"";
+}
+$("sched-inc").onclick=()=>{schedKind="income";syncSchedSeg();};
+$("sched-exp").onclick=()=>{schedKind="expense";syncSchedSeg();};
+function syncSchedFreq(){
+  const f=$("sched-freq").value;
+  $("sched-weekday-wrap").style.display=f==="weekly"?"":"none";
+  $("sched-anchor-wrap").style.display=f==="biweekly"?"":"none";
+  $("sched-day-wrap").style.display=f==="monthly"?"":"none";
+}
+$("sched-freq").onchange=syncSchedFreq;
+$("sched-active").onclick=e=>e.target.classList.toggle("on");
+window.editSched=async id=>{
+  const list=await api("/api/schedules");
+  const s=list.find(x=>x.id===id);if(!s)return;
+  editSchedId=id;schedKind=s.kind;syncSchedSeg();
+  $("sched-form-title").textContent="Editar programado";
+  $("sched-title").value=s.title;$("sched-amount").value=s.amount;
+  $("sched-freq").value=s.freq;syncSchedFreq();
+  if(s.weekday!=null)$("sched-weekday").value=s.weekday;
+  if(s.anchor_date)$("sched-anchor").value=s.anchor_date;
+  if(s.day)$("sched-day").value=s.day;
+  $("sched-active-wrap").style.display="";
+  $("sched-active").classList.toggle("on",s.active);
+  $("sched-delete").style.display="";
+  $("modal-sched").classList.add("show");
+};
+$("add-sched-btn").onclick=()=>{
+  editSchedId=null;schedKind="income";syncSchedSeg();
+  $("sched-form-title").textContent="Nuevo programado";
+  $("sched-title").value="";$("sched-amount").value="";
+  $("sched-freq").value="weekly";syncSchedFreq();
+  $("sched-anchor").value=iso(Y,M,1);$("sched-day").value=15;
+  $("sched-active-wrap").style.display="none";
+  $("sched-delete").style.display="none";
+  $("modal-sched").classList.add("show");
+};
+$("sched-cancel").onclick=()=>$("modal-sched").classList.remove("show");
+$("sched-delete").onclick=async ()=>{
+  if(!confirm("¿Borrar este programado? Ya no se marcará en el calendario."))return;
+  await api(`/api/schedules/${editSchedId}`,{method:"DELETE"});
+  $("modal-sched").classList.remove("show");loadSchedules();
+  if($("tab-cal").classList.contains("active"))renderCal();
+};
+$("sched-save").onclick=async ()=>{
+  const title=$("sched-title").value.trim();
+  const amt=parseFloat($("sched-amount").value);
+  if(!title){alert("Escribe el título");return;}
+  if(!(amt>0)){alert("Escribe un monto válido");return;}
+  const freq=$("sched-freq").value;
+  const body={kind:schedKind,title,amount:amt,freq,
+    weekday:parseInt($("sched-weekday").value),
+    anchor_date:$("sched-anchor").value,
+    day:parseInt($("sched-day").value)};
+  try{
+    if(editSchedId)await api(`/api/schedules/${editSchedId}`,{method:"PUT",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({title,amount:amt,active:$("sched-active").classList.contains("on")})});
+    else await api("/api/schedules",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    $("modal-sched").classList.remove("show");loadSchedules();
+    if($("tab-cal").classList.contains("active"))renderCal();
+  }catch(e){alert(e.message);}
+};
+
 /* ---------- carga general ---------- */
 async function loadAll(){
   try{await loadDashboard();}catch(e){console.warn("dashboard",e);}
   try{await loadTx();}catch(e){console.warn("tx",e);}
   try{await loadBills();}catch(e){console.warn("bills",e);}
+  try{await loadBudget();}catch(e){console.warn("budget",e);}
   try{if($("tab-cal").classList.contains("active"))await renderCal();}catch(e){console.warn("cal",e);}
   const d=new Date();$("today-lbl").textContent=`${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
 }

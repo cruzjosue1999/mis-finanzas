@@ -225,6 +225,26 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date);
             CREATE INDEX IF NOT EXISTS idx_bills_due ON bills(due_date);
+            CREATE TABLE IF NOT EXISTS budget_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,           -- income | expense
+                label TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                sort INTEGER NOT NULL DEFAULT 99
+            );
+            CREATE TABLE IF NOT EXISTS schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,           -- income | expense
+                title TEXT NOT NULL,
+                amount REAL NOT NULL,
+                freq TEXT NOT NULL,           -- weekly | biweekly | monthly
+                weekday INTEGER,              -- 0=Lun..6=Dom (weekly)
+                anchor_date TEXT,             -- YYYY-MM-DD (biweekly)
+                day INTEGER,                  -- 1..31 (monthly)
+                category TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            );
             """
         )
         # Migración: la factura pagada genera un movimiento de gasto (tx_id)
@@ -239,6 +259,56 @@ def init_db():
                 DEFAULT_CATEGORIES,
             )
             print("[DB] categorías iniciales creadas", flush=True)
+        # Presupuesto inicial (solo si la tabla está vacía)
+        nb = db.execute("SELECT COUNT(*) AS c FROM budget_items").fetchone()["c"]
+        if nb == 0:
+            budget_seed = [
+                ("income", "Simple delicious", 4000, 1),
+                ("income", "Hashi", 2200, 2),
+                ("income", "Uber", 1200, 3),
+                ("expense", "Vivienda (renta, hipoteca, impuestos, seguro)", 443, 1),
+                ("expense", "Alimentación", 600, 2),
+                ("expense", "Gas", 400, 3),
+                ("expense", "Chase loan", 233, 4),
+                ("expense", "Teléfono", 261, 5),
+                ("expense", "Seguro", 185, 6),
+                ("expense", "Emily", 230, 7),
+                ("expense", "Abuela", 265, 8),
+                ("expense", "Bill", 50, 9),
+                ("expense", "Papi", 150, 10),
+                ("expense", "Tarjeta del dentista", 275, 11),
+                ("expense", "Cámara affirm", 113, 12),
+                ("expense", "Hoduras", 0, 13),
+                ("expense", "Personal", 0, 14),
+                ("expense", "Casa", 0, 15),
+                ("expense", "Car Shaw", 0, 16),
+                ("expense", "Disney", 8, 17),
+                ("expense", "Apple", 3, 18),
+                ("expense", "Extras", 0, 19),
+            ]
+            db.executemany(
+                "INSERT INTO budget_items (kind, label, amount, sort) VALUES (?, ?, ?, ?)",
+                budget_seed,
+            )
+            print("[DB] presupuesto inicial creado", flush=True)
+        # Ingresos programados (solo si la tabla está vacía)
+        ns = db.execute("SELECT COUNT(*) AS c FROM schedules").fetchone()["c"]
+        if ns == 0:
+            now = _dt.datetime.now().isoformat(timespec="seconds")
+            sched_seed = [
+                # kind, title, amount, freq, weekday, anchor_date, day, category
+                ("income", "Simple delicious", 1000, "weekly", 3, None, None, "Trabajo"),
+                ("income", "Uber", 300, "weekly", 6, None, None, "Trabajo"),
+                ("income", "Hashi", 1100, "biweekly", None, "2026-09-27", None, "Trabajo"),
+            ]
+            for kind, title, amount, freq, wd, anchor, day, cat in sched_seed:
+                db.execute(
+                    "INSERT INTO schedules (kind, title, amount, freq, weekday,"
+                    " anchor_date, day, category, active, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    (kind, title, amount, freq, wd, anchor, day, cat, now),
+                )
+            print("[DB] ingresos programados creados", flush=True)
         db.commit()
     finally:
         try:
@@ -280,6 +350,246 @@ def _add_months(date_str, months):
     m = (m - 1) % 12 + 1
     last_day = _calendar.monthrange(y, m)[1]
     return f"{y:04d}-{m:02d}-{min(d, last_day):02d}"
+
+
+def _schedule_occurrences(sched, y, m):
+    """Fechas (YYYY-MM-DD) del mes y/m en que cae un ingreso/gasto programado."""
+    freq = sched["freq"]
+    first, last = _month_bounds(y, m)
+    f = _dt.date.fromisoformat(first)
+    l = _dt.date.fromisoformat(last)
+    out = []
+    if freq == "weekly" and sched["weekday"] is not None:
+        wd = int(sched["weekday"])  # 0=Lun..6=Dom
+        d = f
+        while d.weekday() != wd:
+            d += _dt.timedelta(days=1)
+        while d <= l:
+            out.append(d.isoformat())
+            d += _dt.timedelta(days=7)
+    elif freq == "biweekly" and sched["anchor_date"]:
+        anchor = _dt.date.fromisoformat(sched["anchor_date"])
+        if anchor <= l:
+            d = anchor
+            while d < f:
+                d += _dt.timedelta(days=15)
+            while d <= l:
+                out.append(d.isoformat())
+                d += _dt.timedelta(days=15)
+    elif freq == "monthly" and sched["day"]:
+        day = min(int(sched["day"]), _calendar.monthrange(y, m)[1])
+        out.append(f"{y:04d}-{m:02d}-{day:02d}")
+    return out
+
+
+def _freq_label(s):
+    if s["freq"] == "weekly":
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        wd = s["weekday"]
+        return f"Cada {dias[wd]}" if wd is not None else "Semanal"
+    if s["freq"] == "biweekly":
+        return "Cada 15 días"
+    if s["freq"] == "monthly":
+        return f"Cada mes (día {s['day']})"
+    return s["freq"]
+
+
+# ---------------- API: presupuesto ----------------
+
+@app.route("/api/budget")
+def api_budget_list():
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM budget_items ORDER BY kind DESC, sort, id"
+    ).fetchall()
+    income = [r for r in rows if r["kind"] == "income"]
+    expense = [r for r in rows if r["kind"] == "expense"]
+
+    def j(r):
+        return {"id": r["id"], "kind": r["kind"], "label": r["label"],
+                "amount": r["amount"]}
+
+    ti = sum(r["amount"] for r in income)
+    te = sum(r["amount"] for r in expense)
+    return jsonify({
+        "income": [j(r) for r in income],
+        "expense": [j(r) for r in expense],
+        "total_income": ti,
+        "total_expense": te,
+        "remaining": ti - te,
+    })
+
+
+@app.route("/api/budget", methods=["POST"])
+def api_budget_create():
+    data = request.get_json(force=True)
+    kind = data.get("kind")
+    label = (data.get("label") or "").strip()
+    if kind not in ("income", "expense") or not label:
+        return jsonify({"error": "kind (income|expense) y label requeridos"}), 400
+    try:
+        amount = float(data.get("amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "monto inválido"}), 400
+    if amount < 0:
+        return jsonify({"error": "el monto no puede ser negativo"}), 400
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO budget_items (kind, label, amount, sort) VALUES (?, ?, ?, 99)",
+        (kind, label, round(amount, 2)),
+    )
+    db.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.route("/api/budget/<int:item_id>", methods=["PUT"])
+def api_budget_update(item_id):
+    data = request.get_json(force=True)
+    db = get_db()
+    row = db.execute("SELECT id FROM budget_items WHERE id=?", (item_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "no existe"}), 404
+    fields, params = [], []
+    if "label" in data and (data["label"] or "").strip():
+        fields.append("label=?")
+        params.append(data["label"].strip())
+    if "amount" in data:
+        try:
+            amount = float(data["amount"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "monto inválido"}), 400
+        if amount < 0:
+            return jsonify({"error": "el monto no puede ser negativo"}), 400
+        fields.append("amount=?")
+        params.append(round(amount, 2))
+    if fields:
+        params.append(item_id)
+        db.execute(f"UPDATE budget_items SET {', '.join(fields)} WHERE id=?", params)
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/budget/<int:item_id>", methods=["DELETE"])
+def api_budget_delete(item_id):
+    db = get_db()
+    db.execute("DELETE FROM budget_items WHERE id=?", (item_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------- API: programados ----------------
+
+def _sched_json(r):
+    return {
+        "id": r["id"],
+        "kind": r["kind"],
+        "title": r["title"],
+        "amount": r["amount"],
+        "freq": r["freq"],
+        "freq_label": _freq_label({
+            "freq": r["freq"], "weekday": r["weekday"], "day": r["day"]}),
+        "weekday": r["weekday"],
+        "anchor_date": r["anchor_date"],
+        "day": r["day"],
+        "category": r["category"],
+        "active": bool(r["active"]),
+    }
+
+
+@app.route("/api/schedules")
+def api_sched_list():
+    db = get_db()
+    rows = db.execute("SELECT * FROM schedules ORDER BY kind DESC, id").fetchall()
+    return jsonify([_sched_json(r) for r in rows])
+
+
+@app.route("/api/schedules", methods=["POST"])
+def api_sched_create():
+    data = request.get_json(force=True)
+    kind = data.get("kind")
+    title = (data.get("title") or "").strip()
+    freq = data.get("freq")
+    if kind not in ("income", "expense") or not title:
+        return jsonify({"error": "kind (income|expense) y título requeridos"}), 400
+    if freq not in ("weekly", "biweekly", "monthly"):
+        return jsonify({"error": "freq debe ser weekly, biweekly o monthly"}), 400
+    try:
+        amount = float(data.get("amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "monto inválido"}), 400
+    if amount <= 0:
+        return jsonify({"error": "el monto debe ser mayor a 0"}), 400
+    weekday = data.get("weekday")
+    anchor_date = (data.get("anchor_date") or "").strip() or None
+    day = data.get("day")
+    if freq == "weekly":
+        try:
+            weekday = int(weekday)
+            assert 0 <= weekday <= 6
+        except (TypeError, ValueError, AssertionError):
+            return jsonify({"error": "weekday 0-6 requerido (0=lunes)"}), 400
+    if freq == "biweekly":
+        try:
+            _dt.date.fromisoformat(anchor_date)
+        except (ValueError, TypeError):
+            return jsonify({"error": "anchor_date inválida (YYYY-MM-DD)"}), 400
+    if freq == "monthly":
+        try:
+            day = int(day)
+            assert 1 <= day <= 31
+        except (TypeError, ValueError, AssertionError):
+            return jsonify({"error": "day 1-31 requerido"}), 400
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO schedules (kind, title, amount, freq, weekday, anchor_date,"
+        " day, category, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        (kind, title, round(amount, 2), freq, weekday, anchor_date, day,
+         (data.get("category") or "").strip(),
+         _dt.datetime.now().isoformat(timespec="seconds")),
+    )
+    db.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.route("/api/schedules/<int:sched_id>", methods=["PUT"])
+def api_sched_update(sched_id):
+    data = request.get_json(force=True)
+    db = get_db()
+    row = db.execute("SELECT id FROM schedules WHERE id=?", (sched_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "no existe"}), 404
+    fields, params = [], []
+    if "title" in data and (data["title"] or "").strip():
+        fields.append("title=?")
+        params.append(data["title"].strip())
+    if "amount" in data:
+        try:
+            amount = float(data["amount"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "monto inválido"}), 400
+        if amount <= 0:
+            return jsonify({"error": "el monto debe ser mayor a 0"}), 400
+        fields.append("amount=?")
+        params.append(round(amount, 2))
+    if "active" in data:
+        fields.append("active=?")
+        params.append(1 if data["active"] else 0)
+    if "category" in data:
+        fields.append("category=?")
+        params.append((data["category"] or "").strip())
+    if fields:
+        params.append(sched_id)
+        db.execute(f"UPDATE schedules SET {', '.join(fields)} WHERE id=?", params)
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/schedules/<int:sched_id>", methods=["DELETE"])
+def api_sched_delete(sched_id):
+    db = get_db()
+    db.execute("DELETE FROM schedules WHERE id=?", (sched_id,))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 def _tx_json(r):
@@ -742,15 +1052,28 @@ def api_calendar():
     ).fetchall()
     days = {}
     for r in txs:
-        d = days.setdefault(r["date"], {"income": 0, "expense": 0, "bills": []})
+        d = days.setdefault(r["date"], {"income": 0, "expense": 0, "bills": [],
+                                        "scheduled": []})
         d[r["type"]] = r["total"]
     for b in bills:
         d = days.setdefault(
-            b["due_date"], {"income": 0, "expense": 0, "bills": []}
+            b["due_date"], {"income": 0, "expense": 0, "bills": [], "scheduled": []}
         )
         d["bills"].append(
             {"company": b["company"], "amount": b["amount"], "paid": bool(b["paid"])}
         )
+    # Ingresos/gastos programados (aproximados) del mes
+    scheds = db.execute("SELECT * FROM schedules WHERE active=1").fetchall()
+    for s in scheds:
+        for ds in _schedule_occurrences(
+                {"freq": s["freq"], "weekday": s["weekday"],
+                 "anchor_date": s["anchor_date"], "day": s["day"]}, y, m):
+            d = days.setdefault(
+                ds, {"income": 0, "expense": 0, "bills": [], "scheduled": []}
+            )
+            d["scheduled"].append(
+                {"title": s["title"], "amount": s["amount"], "kind": s["kind"]}
+            )
     return jsonify({"year": y, "month": m, "days": days})
 
 
