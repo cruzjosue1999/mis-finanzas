@@ -705,6 +705,9 @@ def api_bill_update(bill_id):
     if "recurring" in data:
         fields.append("recurring=?")
         params.append(1 if data["recurring"] else 0)
+    if "tx_id" in data:
+        fields.append("tx_id=?")
+        params.append(data["tx_id"])
     if fields:
         params.append(bill_id)
         db.execute(f"UPDATE bills SET {', '.join(fields)} WHERE id=?", params)
