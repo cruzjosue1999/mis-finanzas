@@ -630,7 +630,11 @@ def manifest():
 
 @app.route("/sw.js")
 def sw():
-    return send_from_directory(os.path.join(BASE_DIR, "static"), "sw.js")
+    # El service worker nunca debe guardarse en la caché HTTP:
+    # si no, el teléfono tarda horas en detectar una versión nueva.
+    resp = send_from_directory(os.path.join(BASE_DIR, "static"), "sw.js")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/apple-touch-icon.png")
